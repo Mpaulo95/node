@@ -214,6 +214,7 @@ enum ContextLookupFlags {
   V(REGEXP_PROTOTYPE_MAP_INDEX, Map, regexp_prototype_map)                     \
   V(REGEXP_REPLACE_FUNCTION_INDEX, JSFunction, regexp_replace_function)        \
   V(REGEXP_RESULT_MAP_INDEX, Map, regexp_result_map)                           \
+  V(REGEXP_RESULT_WITH_INDICES_MAP_INDEX, Map, regexp_result_with_indices_map) \
   V(REGEXP_RESULT_INDICES_MAP_INDEX, Map, regexp_result_indices_map)           \
   V(REGEXP_SEARCH_FUNCTION_INDEX, JSFunction, regexp_search_function)          \
   V(REGEXP_SPLIT_FUNCTION_INDEX, JSFunction, regexp_split_function)            \
@@ -236,6 +237,7 @@ enum ContextLookupFlags {
   V(SLOW_TEMPLATE_INSTANTIATIONS_CACHE_INDEX, SimpleNumberDictionary,          \
     slow_template_instantiations_cache)                                        \
   V(ATOMICS_WAITASYNC_PROMISES, OrderedHashSet, atomics_waitasync_promises)    \
+  V(WASM_DEBUG_PROXY_MAPS, FixedArray, wasm_debug_proxy_maps)                  \
   /* Fast Path Protectors */                                                   \
   V(REGEXP_SPECIES_PROTECTOR_INDEX, PropertyCell, regexp_species_protector)    \
   /* All *_FUNCTION_MAP_INDEX definitions used by Context::FunctionMapIndex */ \
@@ -311,11 +313,11 @@ enum ContextLookupFlags {
   V(FINALIZATION_REGISTRY_CLEANUP_SOME, JSFunction,                            \
     finalization_registry_cleanup_some)                                        \
   V(FUNCTION_HAS_INSTANCE_INDEX, JSFunction, function_has_instance)            \
+  V(FUNCTION_TO_STRING_INDEX, JSFunction, function_to_string)                  \
   V(OBJECT_TO_STRING, JSFunction, object_to_string)                            \
   V(OBJECT_VALUE_OF_FUNCTION_INDEX, JSFunction, object_value_of_function)      \
   V(PROMISE_ALL_INDEX, JSFunction, promise_all)                                \
   V(PROMISE_ANY_INDEX, JSFunction, promise_any)                                \
-  V(PROMISE_CATCH_INDEX, JSFunction, promise_catch)                            \
   V(PROMISE_FUNCTION_INDEX, JSFunction, promise_function)                      \
   V(RANGE_ERROR_FUNCTION_INDEX, JSFunction, range_error_function)              \
   V(REFERENCE_ERROR_FUNCTION_INDEX, JSFunction, reference_error_function)      \
@@ -335,6 +337,8 @@ enum ContextLookupFlags {
   V(WEAKSET_ADD_INDEX, JSFunction, weakset_add)                                \
   V(RETAINED_MAPS, WeakArrayList, retained_maps)                               \
   V(OSR_CODE_CACHE_INDEX, WeakFixedArray, osr_code_cache)
+
+#include "torque-generated/src/objects/contexts-tq.inc"
 
 // A table of all script contexts. Every loaded top-level script with top-level
 // lexical declarations contributes its ScriptContext into this table.
@@ -427,35 +431,24 @@ class ScriptContextTable : public FixedArray {
 // Script contexts from all top-level scripts are gathered in
 // ScriptContextTable.
 
-class Context : public HeapObject {
+class Context : public TorqueGeneratedContext<Context, HeapObject> {
  public:
   NEVER_READ_ONLY_SPACE
 
-  DECL_CAST(Context)
-  // [length]: length of the context.
-  V8_INLINE int length() const;
-  V8_INLINE void set_length(int value);
-
   // Setter and getter for elements.
   V8_INLINE Object get(int index) const;
-  V8_INLINE Object get(const Isolate* isolate, int index) const;
+  V8_INLINE Object get(IsolateRoot isolate, int index) const;
   V8_INLINE void set(int index, Object value);
   // Setter with explicit barrier mode.
   V8_INLINE void set(int index, Object value, WriteBarrierMode mode);
   // Setter and getter with synchronization semantics.
   V8_INLINE Object synchronized_get(int index) const;
-  V8_INLINE Object synchronized_get(const Isolate* isolate, int index) const;
+  V8_INLINE Object synchronized_get(IsolateRoot isolate, int index) const;
   V8_INLINE void synchronized_set(int index, Object value);
 
-  DEFINE_FIELD_OFFSET_CONSTANTS(HeapObject::kHeaderSize,
-                                TORQUE_GENERATED_CONTEXT_FIELDS)
-  static const int kScopeInfoOffset = kHeaderSize;
+  static const int kScopeInfoOffset = kElementsOffset;
   static const int kPreviousOffset = kScopeInfoOffset + kTaggedSize;
 
-  // TODO(v8:8989): [torque] Support marker constants
-  /* TODO(ishell): remove this fixedArray-like header size. */
-  static const int kFixedArrayLikeHeaderSize = kScopeInfoOffset;
-  static const int kStartOfTaggedFieldsOffset = kScopeInfoOffset;
   /* Header size. */                                                  \
   /* TODO(ishell): use this as header size once MIN_CONTEXT_SLOTS */  \
   /* is removed in favour of offset-based access to common fields. */ \
@@ -466,7 +459,10 @@ class Context : public HeapObject {
 
   // Garbage collection support.
   V8_INLINE static constexpr int SizeFor(int length) {
-    return kFixedArrayLikeHeaderSize + length * kTaggedSize;
+    // TODO(v8:9287): This is a workaround for GCMole build failures.
+    int result = kElementsOffset + length * kTaggedSize;
+    CONSTEXPR_DCHECK(TorqueGeneratedContext::SizeFor(length) == result);
+    return result;
   }
 
   // Code Generation support.
@@ -476,7 +472,7 @@ class Context : public HeapObject {
   }
   // Offset of the element from the heap object pointer.
   V8_INLINE static constexpr int SlotOffset(int index) {
-    return SizeFor(index) - kHeapObjectTag;
+    return OffsetOfElementAt(index) - kHeapObjectTag;
   }
 
   // Initializes the variable slots of the context. Lexical variables that need
@@ -646,7 +642,7 @@ class Context : public HeapObject {
   DECL_PRINTER(Context)
   DECL_VERIFIER(Context)
 
-  using BodyDescriptor = FlexibleBodyDescriptor<kStartOfTaggedFieldsOffset>;
+  class BodyDescriptor;
 
  private:
 #ifdef DEBUG
@@ -654,13 +650,15 @@ class Context : public HeapObject {
   static bool IsBootstrappingOrValidParentContext(Object object, Context kid);
 #endif
 
-  OBJECT_CONSTRUCTORS(Context, HeapObject);
+  TQ_OBJECT_CONSTRUCTORS(Context)
 };
 
 class NativeContext : public Context {
  public:
   DECL_CAST(NativeContext)
   // TODO(neis): Move some stuff from Context here.
+
+  inline void AllocateExternalPointerEntries(Isolate* isolate);
 
   // [microtask_queue]: pointer to the MicrotaskQueue object.
   DECL_GETTER(microtask_queue, MicrotaskQueue*)

@@ -67,6 +67,23 @@
       static_cast<byte>((((x) >> 21) & MASK_7) | 0x80), \
       static_cast<byte>((((x) >> 28) & MASK_7))
 
+#define U64V_1(x) U32V_1(static_cast<uint32_t>(x))
+#define U64V_2(x) U32V_2(static_cast<uint32_t>(x))
+#define U64V_3(x) U32V_3(static_cast<uint32_t>(x))
+#define U64V_4(x) U32V_4(static_cast<uint32_t>(x))
+#define U64V_5(x)                                                  \
+  static_cast<uint8_t>((uint64_t{x} & MASK_7) | 0x80),             \
+      static_cast<uint8_t>(((uint64_t{x} >> 7) & MASK_7) | 0x80),  \
+      static_cast<uint8_t>(((uint64_t{x} >> 14) & MASK_7) | 0x80), \
+      static_cast<uint8_t>(((uint64_t{x} >> 21) & MASK_7) | 0x80), \
+      static_cast<uint8_t>(((uint64_t{x} >> 28) & MASK_7))
+#define U64V_6(x)                                                  \
+  static_cast<uint8_t>((uint64_t{x} & MASK_7) | 0x80),             \
+      static_cast<uint8_t>(((uint64_t{x} >> 7) & MASK_7) | 0x80),  \
+      static_cast<uint8_t>(((uint64_t{x} >> 14) & MASK_7) | 0x80), \
+      static_cast<uint8_t>(((uint64_t{x} >> 21) & MASK_7) | 0x80), \
+      static_cast<uint8_t>(((uint64_t{x} >> 28) & MASK_7) | 0x80), \
+      static_cast<uint8_t>(((uint64_t{x} >> 35) & MASK_7))
 #define U64V_10(x)                                                 \
   static_cast<uint8_t>((uint64_t{x} & MASK_7) | 0x80),             \
       static_cast<uint8_t>(((uint64_t{x} >> 7) & MASK_7) | 0x80),  \
@@ -163,11 +180,16 @@
 #define WASM_IF_ELSE_X(index, cond, tstmt, fstmt)                            \
   cond, kExprIf, static_cast<byte>(index), tstmt, kExprElse, fstmt, kExprEnd
 
-#define WASM_TRY_CATCH_T(t, trystmt, catchstmt)                            \
+#define WASM_TRY_CATCH_T(t, trystmt, catchstmt, except)                    \
   kExprTry, static_cast<byte>((t).value_type_code()), trystmt, kExprCatch, \
-      catchstmt, kExprEnd
+      except, catchstmt, kExprEnd
 #define WASM_TRY_CATCH_R(t, trystmt, catchstmt) \
   kExprTry, WASM_REF_TYPE(t), trystmt, kExprCatch, catchstmt, kExprEnd
+#define WASM_TRY_CATCH_ALL_T(t, trystmt, catchstmt)                           \
+  kExprTry, static_cast<byte>((t).value_type_code()), trystmt, kExprCatchAll, \
+      catchstmt, kExprEnd
+#define WASM_TRY_DELEGATE(trystmt, depth) \
+  kExprTry, kVoidCode, trystmt, kExprDelegate, depth
 
 #define WASM_SELECT(tval, fval, cond) tval, fval, cond, kExprSelect
 #define WASM_SELECT_I(tval, fval, cond) \
@@ -206,8 +228,10 @@
 // Misc expressions.
 //------------------------------------------------------------------------------
 #define WASM_STMTS(...) __VA_ARGS__
-#define WASM_ZERO kExprI32Const, 0
-#define WASM_ONE kExprI32Const, 1
+#define WASM_ZERO WASM_I32V_1(0)
+#define WASM_ONE WASM_I32V_1(1)
+#define WASM_ZERO64 WASM_I64V_1(0)
+#define WASM_ONE64 WASM_I64V_1(1)
 
 #define I32V_MIN(length) -(1 << (6 + (7 * ((length)-1))))
 #define I32V_MAX(length) ((1 << (6 + (7 * ((length)-1)))) - 1)
@@ -405,12 +429,12 @@ inline WasmOpcode LoadStoreOpcodeOf(MachineType type, bool store) {
       static_cast<byte>(bit_cast<uint64_t>(static_cast<double>(val)) >> 48), \
       static_cast<byte>(bit_cast<uint64_t>(static_cast<double>(val)) >> 56)
 
-#define WASM_GET_LOCAL(index) kExprLocalGet, static_cast<byte>(index)
-#define WASM_SET_LOCAL(index, val) val, kExprLocalSet, static_cast<byte>(index)
-#define WASM_TEE_LOCAL(index, val) val, kExprLocalTee, static_cast<byte>(index)
+#define WASM_LOCAL_GET(index) kExprLocalGet, static_cast<byte>(index)
+#define WASM_LOCAL_SET(index, val) val, kExprLocalSet, static_cast<byte>(index)
+#define WASM_LOCAL_TEE(index, val) val, kExprLocalTee, static_cast<byte>(index)
 #define WASM_DROP kExprDrop
-#define WASM_GET_GLOBAL(index) kExprGlobalGet, static_cast<byte>(index)
-#define WASM_SET_GLOBAL(index, val) \
+#define WASM_GLOBAL_GET(index) kExprGlobalGet, static_cast<byte>(index)
+#define WASM_GLOBAL_SET(index, val) \
   val, kExprGlobalSet, static_cast<byte>(index)
 #define WASM_TABLE_GET(table_index, index) \
   index, kExprTableGet, static_cast<byte>(table_index)
@@ -477,10 +501,10 @@ inline WasmOpcode LoadStoreOpcodeOf(MachineType type, bool store) {
 #define WASM_REF_IS_NULL(val) val, kExprRefIsNull
 #define WASM_REF_AS_NON_NULL(val) val, kExprRefAsNonNull
 #define WASM_REF_EQ(lhs, rhs) lhs, rhs, kExprRefEq
-#define WASM_REF_TEST(obj_type, rtt_type, ref, rtt) \
-  ref, rtt, WASM_GC_OP(kExprRefTest), obj_type, rtt_type
-#define WASM_REF_CAST(obj_type, rtt_type, ref, rtt) \
-  ref, rtt, WASM_GC_OP(kExprRefCast), obj_type, rtt_type
+#define WASM_REF_TEST(rtt_type, ref, rtt) \
+  ref, rtt, WASM_GC_OP(kExprRefTest), rtt_type
+#define WASM_REF_CAST(rtt_type, ref, rtt) \
+  ref, rtt, WASM_GC_OP(kExprRefCast), rtt_type
 // Takes a reference value from the value stack to allow sequences of
 // conditional branches.
 #define WASM_BR_ON_CAST(depth, rtt) \
@@ -502,7 +526,9 @@ inline WasmOpcode LoadStoreOpcodeOf(MachineType type, bool store) {
 #define WASM_ARRAY_LEN(typeidx, array) \
   array, WASM_GC_OP(kExprArrayLen), static_cast<byte>(typeidx)
 
-#define WASM_RTT(depth, typeidx) kRttCode, U32V_1(depth), U32V_1(typeidx)
+#define WASM_RTT_WITH_DEPTH(depth, typeidx) \
+  kRttWithDepthCode, U32V_1(depth), U32V_1(typeidx)
+#define WASM_RTT(typeidx) kRttCode, U32V_1(typeidx)
 #define WASM_RTT_CANON(typeidx) \
   WASM_GC_OP(kExprRttCanon), static_cast<byte>(typeidx)
 #define WASM_RTT_SUB(typeidx, supertype) \
